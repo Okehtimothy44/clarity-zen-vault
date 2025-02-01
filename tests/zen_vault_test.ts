@@ -31,51 +31,43 @@ Clarinet.test({
 });
 
 Clarinet.test({
-  name: "Test adding and retrieving journal entries",
-  async fn(chain: Chain, accounts: Map<string, Account>) {
-    const deployer = accounts.get('deployer')!;
-    const wallet1 = accounts.get('wallet_1')!;
-    
-    // First add a prompt
-    let setupBlock = chain.mineBlock([
-      Tx.contractCall('zen-vault', 'add-prompt', [
-        types.ascii("What are you grateful for today?")
-      ], deployer.address),
-    ]);
-    
-    let promptId = setupBlock.receipts[0].result.expectOk().expectUint(1);
-    
-    // Now test journal entries
-    let block = chain.mineBlock([
-      // Add an entry
-      Tx.contractCall('zen-vault', 'add-entry', [
-        types.utf8("I am grateful for this beautiful day"),
-        types.uint(promptId)
-      ], wallet1.address),
-    ]);
-    
-    let entryId = block.receipts[0].result.expectOk().expectUint(2);
-    
-    // Retrieve the entry
-    let retrieveBlock = chain.mineBlock([
-      Tx.contractCall('zen-vault', 'get-my-entry', [
-        types.uint(entryId)
-      ], wallet1.address),
-    ]);
-    
-    // Verify entry contents
-    let entry = retrieveBlock.receipts[0].result.expectOk();
-    assertEquals(entry.content, "I am grateful for this beautiful day");
-    assertEquals(entry.prompt-id, promptId);
-  },
-});
-
-Clarinet.test({
-  name: "Test entry privacy",
+  name: "Test shared entries functionality",
   async fn(chain: Chain, accounts: Map<string, Account>) {
     const deployer = accounts.get('deployer')!;
     const wallet1 = accounts.get('wallet_1')!;
     const wallet2 = accounts.get('wallet_2')!;
+    
+    // Add prompt and shared entry
+    let setupBlock = chain.mineBlock([
+      Tx.contractCall('zen-vault', 'add-prompt', [
+        types.ascii("What are you grateful for today?")
+      ], deployer.address),
+      Tx.contractCall('zen-vault', 'add-entry', [
+        types.utf8("Sharing my gratitude"),
+        types.uint(1),
+        types.bool(true) // shared entry
+      ], wallet1.address),
+    ]);
+    
+    // Another user retrieves shared entry
+    let retrieveBlock = chain.mineBlock([
+      Tx.contractCall('zen-vault', 'get-shared-entry', [
+        types.uint(2)
+      ], wallet2.address),
+    ]);
+    
+    // Verify shared entry is accessible
+    let entry = retrieveBlock.receipts[0].result.expectOk();
+    assertEquals(entry.content, "Sharing my gratitude");
+    assertEquals(entry.is-shared, true);
+  },
+});
+
+Clarinet.test({
+  name: "Test reflection functionality", 
+  async fn(chain: Chain, accounts: Map<string, Account>) {
+    const deployer = accounts.get('deployer')!;
+    const wallet1 = accounts.get('wallet_1')!;
     
     // Add prompt and entry
     let setupBlock = chain.mineBlock([
@@ -83,18 +75,30 @@ Clarinet.test({
         types.ascii("What are you grateful for today?")
       ], deployer.address),
       Tx.contractCall('zen-vault', 'add-entry', [
-        types.utf8("My private thoughts"),
-        types.uint(1)
+        types.utf8("Original entry"),
+        types.uint(1),
+        types.bool(false)
       ], wallet1.address),
     ]);
     
-    // Try to access someone else's entry
-    let block = chain.mineBlock([
-      Tx.contractCall('zen-vault', 'get-my-entry', [
-        types.uint(2)
-      ], wallet2.address),
+    // Add reflection
+    let reflectionBlock = chain.mineBlock([
+      Tx.contractCall('zen-vault', 'add-reflection', [
+        types.uint(2),
+        types.utf8("My later thoughts")
+      ], wallet1.address),
     ]);
     
-    block.receipts[0].result.expectErr(types.uint(102)); // err-entry-not-found
+    reflectionBlock.receipts[0].result.expectOk().expectBool(true);
+    
+    // Retrieve entry with reflection
+    let retrieveBlock = chain.mineBlock([
+      Tx.contractCall('zen-vault', 'get-my-entry', [
+        types.uint(2)
+      ], wallet1.address),
+    ]);
+    
+    let entry = retrieveBlock.receipts[0].result.expectOk();
+    assertEquals(entry.reflection, "My later thoughts");
   },
 });

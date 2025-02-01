@@ -3,8 +3,9 @@
 ;; Constants
 (define-constant contract-owner tx-sender)
 (define-constant err-not-owner (err u100))
-(define-constant err-invalid-entry (err u101))
+(define-constant err-invalid-entry (err u101)) 
 (define-constant err-entry-not-found (err u102))
+(define-constant err-not-shared (err u103))
 
 ;; Data Variables
 (define-data-var current-prompt-id uint u0)
@@ -15,7 +16,9 @@
     {
         content: (string-utf8 2048),
         prompt-id: uint,
-        timestamp: uint
+        timestamp: uint,
+        is-shared: bool,
+        reflection: (optional (string-utf8 1024))
     }
 )
 
@@ -27,8 +30,13 @@
     }
 )
 
+(define-map shared-entries
+    {entry-id: uint}
+    {owner: principal}
+)
+
 ;; Public Functions
-(define-public (add-entry (content (string-utf8 2048)) (prompt-id uint))
+(define-public (add-entry (content (string-utf8 2048)) (prompt-id uint) (is-shared bool))
     (let
         (
             (entry-id (+ (var-get current-prompt-id) u1))
@@ -39,8 +47,17 @@
             {
                 content: content,
                 prompt-id: prompt-id,
-                timestamp: block-height
+                timestamp: block-height,
+                is-shared: is-shared,
+                reflection: none
             }
+        )
+        (if is-shared
+            (map-set shared-entries
+                {entry-id: entry-id}
+                {owner: tx-sender}
+            )
+            true
         )
         (var-set current-prompt-id entry-id)
         (ok entry-id)
@@ -54,6 +71,48 @@
         )
         (if (is-some entry)
             (ok (unwrap-panic entry))
+            err-entry-not-found
+        )
+    )
+)
+
+(define-public (get-shared-entry (entry-id uint))
+    (let
+        (
+            (shared-info (map-get? shared-entries {entry-id: entry-id}))
+        )
+        (if (is-some shared-info)
+            (let
+                (
+                    (entry (map-get? journal-entries 
+                        {entry-id: entry-id, owner: (get owner (unwrap-panic shared-info))}
+                    ))
+                )
+                (if (and (is-some entry) (get is-shared (unwrap-panic entry)))
+                    (ok (unwrap-panic entry))
+                    err-not-shared
+                )
+            )
+            err-entry-not-found
+        )
+    )
+)
+
+(define-public (add-reflection (entry-id uint) (reflection (string-utf8 1024)))
+    (let
+        (
+            (entry (map-get? journal-entries {entry-id: entry-id, owner: tx-sender}))
+        )
+        (if (is-some entry)
+            (begin
+                (map-set journal-entries
+                    {entry-id: entry-id, owner: tx-sender}
+                    (merge (unwrap-panic entry)
+                        {reflection: (some reflection)}
+                    )
+                )
+                (ok true)
+            )
             err-entry-not-found
         )
     )
