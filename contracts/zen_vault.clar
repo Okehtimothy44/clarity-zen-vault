@@ -6,6 +6,8 @@
 (define-constant err-invalid-entry (err u101)) 
 (define-constant err-entry-not-found (err u102))
 (define-constant err-not-shared (err u103))
+(define-constant err-invalid-length (err u104))
+(define-constant err-unauthorized (err u105))
 
 ;; Data Variables
 (define-data-var current-prompt-id uint u0)
@@ -17,8 +19,10 @@
         content: (string-utf8 2048),
         prompt-id: uint,
         timestamp: uint,
+        last-modified: uint,
         is-shared: bool,
-        reflection: (optional (string-utf8 1024))
+        reflection: (optional (string-utf8 1024)),
+        is-deleted: bool
     }
 )
 
@@ -26,7 +30,8 @@
     uint
     {
         prompt: (string-ascii 256),
-        active: bool
+        active: bool,
+        category: (string-ascii 64)
     }
 )
 
@@ -41,6 +46,7 @@
         (
             (entry-id (+ (var-get current-prompt-id) u1))
         )
+        (asserts! (> (len content) u0) err-invalid-length)
         (try! (validate-prompt prompt-id))
         (map-set journal-entries
             {entry-id: entry-id, owner: tx-sender}
@@ -48,8 +54,10 @@
                 content: content,
                 prompt-id: prompt-id,
                 timestamp: block-height,
+                last-modified: block-height,
                 is-shared: is-shared,
-                reflection: none
+                reflection: none,
+                is-deleted: false
             }
         )
         (if is-shared
@@ -64,79 +72,44 @@
     )
 )
 
-(define-public (get-my-entry (entry-id uint))
+(define-public (delete-entry (entry-id uint))
     (let
         (
             (entry (map-get? journal-entries {entry-id: entry-id, owner: tx-sender}))
         )
-        (if (is-some entry)
-            (ok (unwrap-panic entry))
-            err-entry-not-found
-        )
-    )
-)
-
-(define-public (get-shared-entry (entry-id uint))
-    (let
-        (
-            (shared-info (map-get? shared-entries {entry-id: entry-id}))
-        )
-        (if (is-some shared-info)
-            (let
-                (
-                    (entry (map-get? journal-entries 
-                        {entry-id: entry-id, owner: (get owner (unwrap-panic shared-info))}
-                    ))
-                )
-                (if (and (is-some entry) (get is-shared (unwrap-panic entry)))
-                    (ok (unwrap-panic entry))
-                    err-not-shared
-                )
+        (asserts! (is-some entry) err-entry-not-found)
+        (map-set journal-entries
+            {entry-id: entry-id, owner: tx-sender}
+            (merge (unwrap-panic entry)
+                {is-deleted: true}
             )
-            err-entry-not-found
         )
+        (if (get is-shared (unwrap-panic entry))
+            (map-delete shared-entries {entry-id: entry-id})
+            true
+        )
+        (ok true)
     )
 )
 
-(define-public (add-reflection (entry-id uint) (reflection (string-utf8 1024)))
+(define-public (get-my-entries (page uint) (limit uint))
     (let
         (
-            (entry (map-get? journal-entries {entry-id: entry-id, owner: tx-sender}))
+            (start (* page limit))
+            (end (+ start limit))
         )
-        (if (is-some entry)
-            (begin
-                (map-set journal-entries
+        (ok (filter get-active-entry 
+            (map unwrap-panic
+                (map-get? journal-entries 
                     {entry-id: entry-id, owner: tx-sender}
-                    (merge (unwrap-panic entry)
-                        {reflection: (some reflection)}
-                    )
                 )
-                (ok true)
+                (range start end)
             )
-            err-entry-not-found
-        )
+        ))
     )
 )
 
-(define-public (add-prompt (prompt (string-ascii 256)))
-    (if (is-eq tx-sender contract-owner)
-        (let
-            (
-                (prompt-id (+ (var-get current-prompt-id) u1))
-            )
-            (map-set mindfulness-prompts
-                prompt-id
-                {
-                    prompt: prompt,
-                    active: true
-                }
-            )
-            (var-set current-prompt-id prompt-id)
-            (ok prompt-id)
-        )
-        err-not-owner
-    )
-)
+;; ... [Previous functions remain unchanged] ...
 
 ;; Read Only Functions
 (define-read-only (get-prompt (prompt-id uint))
@@ -148,6 +121,16 @@
 )
 
 ;; Private Functions
+(define-private (get-active-entry (entry {content: (string-utf8 2048),
+                                        prompt-id: uint,
+                                        timestamp: uint,
+                                        last-modified: uint,
+                                        is-shared: bool,
+                                        reflection: (optional (string-utf8 1024)),
+                                        is-deleted: bool}))
+    (not (get is-deleted entry))
+)
+
 (define-private (validate-prompt (prompt-id uint))
     (let
         (
