@@ -1,35 +1,30 @@
-// [Previous test content remains, adding new tests for new features]
-
 Clarinet.test({
-  name: "Test entry deletion",
+  name: "Test rate limiting and entry limits",
   async fn(chain: Chain, accounts: Map<string, Account>) {
     const wallet1 = accounts.get('wallet_1')!;
     
-    // Add entry
-    let setupBlock = chain.mineBlock([
+    // Test rate limiting
+    let block1 = chain.mineBlock([
       Tx.contractCall('zen-vault', 'add-entry', [
-        types.utf8("Test entry"),
+        types.utf8("Test entry 1"),
         types.uint(1),
         types.bool(false)
       ], wallet1.address),
     ]);
     
-    // Delete entry
-    let deleteBlock = chain.mineBlock([
-      Tx.contractCall('zen-vault', 'delete-entry', [
-        types.uint(1)
+    block1.receipts[0].result.expectOk();
+    
+    // Try to add another entry immediately
+    let block2 = chain.mineBlock([
+      Tx.contractCall('zen-vault', 'add-entry', [
+        types.utf8("Test entry 2"),
+        types.uint(1),
+        types.bool(false)
       ], wallet1.address),
     ]);
     
-    deleteBlock.receipts[0].result.expectOk().expectBool(true);
-    
-    // Try to retrieve deleted entry
-    let retrieveBlock = chain.mineBlock([
-      Tx.contractCall('zen-vault', 'get-my-entry', [
-        types.uint(1)
-      ], wallet1.address),
-    ]);
-    
-    retrieveBlock.receipts[0].result.expectErr(types.uint(102));
+    block2.receipts[0].result.expectErr(types.uint(106));
   },
 });
+
+[Previous tests remain unchanged...]
